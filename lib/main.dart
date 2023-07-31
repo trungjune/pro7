@@ -1,125 +1,155 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
+import 'package:sixam_mart/controller/auth_controller.dart';
+import 'package:sixam_mart/controller/cart_controller.dart';
+import 'package:sixam_mart/controller/localization_controller.dart';
+import 'package:sixam_mart/controller/location_controller.dart';
+import 'package:sixam_mart/controller/splash_controller.dart';
+import 'package:sixam_mart/controller/theme_controller.dart';
+import 'package:sixam_mart/controller/wishlist_controller.dart';
+import 'package:sixam_mart/data/model/body/notification_body.dart';
+import 'package:sixam_mart/helper/notification_helper.dart';
+import 'package:sixam_mart/helper/responsive_helper.dart';
+import 'package:sixam_mart/helper/route_helper.dart';
+import 'package:sixam_mart/theme/dark_theme.dart';
+import 'package:sixam_mart/theme/light_theme.dart';
+import 'package:sixam_mart/util/app_constants.dart';
+import 'package:sixam_mart/util/messages.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:get/get.dart';
+import 'package:sixam_mart/view/screens/home/widget/cookies_view.dart';
+import 'package:url_strategy/url_strategy.dart';
+import 'helper/get_di.dart' as di;
 
-void main() {
-  runApp(const MyApp());
-}
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+Future<void> main() async {
+  if(ResponsiveHelper.isMobilePhone()) {
+    HttpOverrides.global = MyHttpOverrides();
+  }
+  setPathUrlStrategy();
+  WidgetsFlutterBinding.ensureInitialized();
+  if(GetPlatform.isWeb){
+    await Firebase.initializeApp(options: const FirebaseOptions(
+      apiKey: 'AIzaSyDFN-73p8zKVZbA0i5DtO215XzAb-xuGSE',
+      appId: '1:1000163153346:web:4f702a4b5adbd5c906b25b',
+      messagingSenderId: 'G-L1GNL2YV61',
+      projectId: 'ammart-8885e',
+    ));
+  }
+  await Firebase.initializeApp();
+  Map<String, Map<String, String>> languages = await di.init();
 
-  // This widget is the root of your application.
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a blue toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+  NotificationBody? body;
+  try {
+    if (GetPlatform.isMobile) {
+      final RemoteMessage? remoteMessage = await FirebaseMessaging.instance.getInitialMessage();
+      if (remoteMessage != null) {
+        body = NotificationHelper.convertNotification(remoteMessage.data);
+      }
+      await NotificationHelper.initialize(flutterLocalNotificationsPlugin);
+      FirebaseMessaging.onBackgroundMessage(myBackgroundMessageHandler);
+    }
+  }catch(_) {}
+
+  if (ResponsiveHelper.isWeb()) {
+    await FacebookAuth.instance.webAndDesktopInitialize(
+      appId: "380903914182154",
+      cookie: true,
+      xfbml: true,
+      version: "v15.0",
     );
   }
+  runApp(MyApp(languages: languages, body: body));
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class MyApp extends StatefulWidget {
+  final Map<String, Map<String, String>>? languages;
+  final NotificationBody? body;
+  const MyApp({Key? key, required this.languages, required this.body}) : super(key: key);
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<MyApp> createState() => _MyAppState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _MyAppState extends State<MyApp> {
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+  @override
+  void initState() {
+    super.initState();
+
+    _route();
+  }
+
+  void _route() async {
+    if(GetPlatform.isWeb) {
+      await Get.find<SplashController>().initSharedData();
+      if(Get.find<LocationController>().getUserAddress() != null && Get.find<LocationController>().getUserAddress()!.zoneIds == null) {
+        Get.find<AuthController>().clearSharedAddress();
+      }
+      Get.find<CartController>().getCartData();
+    }
+    Get.find<SplashController>().getConfigData(loadLandingData: GetPlatform.isWeb).then((bool isSuccess) async {
+      if (isSuccess) {
+        if (Get.find<AuthController>().isLoggedIn()) {
+          Get.find<AuthController>().updateToken();
+          await Get.find<WishListController>().getWishList();
+        }
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
+
+    return GetBuilder<ThemeController>(builder: (themeController) {
+      return GetBuilder<LocalizationController>(builder: (localizeController) {
+        return GetBuilder<SplashController>(builder: (splashController) {
+          return (GetPlatform.isWeb && splashController.configModel == null) ? const SizedBox() : GetMaterialApp(
+            title: AppConstants.appName,
+            debugShowCheckedModeBanner: false,
+            navigatorKey: Get.key,
+            scrollBehavior: const MaterialScrollBehavior().copyWith(
+              dragDevices: {PointerDeviceKind.mouse, PointerDeviceKind.touch},
             ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+            theme: themeController.darkTheme ? themeController.darkColor == null ? dark() : dark(color
+                : themeController.darkColor!) : themeController.lightColor == null ? light()
+                : light(color: themeController.lightColor!),
+            locale: localizeController.locale,
+            translations: Messages(languages: widget.languages),
+            fallbackLocale: Locale(AppConstants.languages[0].languageCode!, AppConstants.languages[0].countryCode),
+            initialRoute: GetPlatform.isWeb ? RouteHelper.getInitialRoute() : RouteHelper.getSplashRoute(widget.body),
+            getPages: RouteHelper.routes,
+            defaultTransition: Transition.topLevel,
+            transitionDuration: const Duration(milliseconds: 500),
+            builder: (BuildContext context, widget) => Material(
+              child: Stack(children: [
+                widget!,
+
+                GetBuilder<SplashController>(builder: (splashController){
+                  if(!splashController.savedCookiesData || !splashController.getAcceptCookiesStatus(splashController.configModel!.cookiesText ?? "")){
+                    return ResponsiveHelper.isWeb() ? const Align(alignment: Alignment.bottomCenter,child: CookiesView()) : const SizedBox();
+                  }else{
+                    return const SizedBox();
+                  }
+                })
+              ]),
             ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
-    );
+          );
+        });
+      });
+    });
+  }
+}
+
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
   }
 }
